@@ -358,7 +358,7 @@ def plot_all_vfs(map_size,
     else:
         row, col = (num_spaceships // 2) + 1, num_spaceships // 2
 
-    figure, axis = plt.subplots(row, col, squeeze=False)
+    figure, axis = plt.subplots(row, col, squeeze=False, figsize=(15, 15))
 
     for spaceship_index in range(num_spaceships):
         axis = plot_vf(
@@ -375,7 +375,7 @@ def plot_all_vfs(map_size,
             repulsive_force_scale,
             vortex_scale,
             max_speed,
-            "Start",
+            "",
             axis,
             col,
         )
@@ -427,18 +427,18 @@ def build_video(video_name, file_dir,  gif = False, fps = 20):
 #     ax.plot_surface(x, y, z, cmap=plt.cm.YlGnBu_r)
 
 def main():
-    map_size = 5
+    map_size = 12
     num_spaceships = 4
     goal_radius = 0.5
-    num_obstacles = 2
-    obstacle_radius = 0.5
+    num_obstacles = 3
+    obstacle_radius = 1.
     spaceship_radius = 0.5
-    safety_distance = 1.5
-    max_speed = 0.3
+    safety_distance = 3.
+    max_speed = 0.25
     attractive_force_scale = max_speed
     repulsive_force_scale = max_speed
     vortex_scale = 0.2
-    timesteps = 40
+    timesteps = 150
     plots_folder = "./plots"
     spaceships_positions = generate_random_positions(
         num_spaceships, spaceship_radius, map_size, 2

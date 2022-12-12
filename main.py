@@ -7,7 +7,7 @@ from os import listdir
 from os.path import isfile, join
 import re
 from tqdm import tqdm
-
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 def generate_random_positions(
     num_positions: int, object_radius: float, map_size: float, num_coordinates: int = 3
@@ -44,7 +44,7 @@ def cap(velocity: np.ndarray, max_speed: float) -> np.ndarray:
     Returns:
         np.ndarray: The capped velocity.
     """
-    n = np.linalg.norm(velocity)
+    n = np.linalg.norm(velocity, axis=-1)
     if n > max_speed:
         return (velocity / n) * max_speed
     return velocity
@@ -92,8 +92,20 @@ def get_vortex_velocity(
         np.ndarray: _description_
     """
 
-    velocity = np.zeros(2, dtype=np.float32)
+    velocity = np.zeros(3, dtype=np.float32)
 
+    # 2D
+    # v_pos = position - centre_pos
+    # distance = np.linalg.norm(v_pos)
+    # square_sum = (v_pos[0] ** 2) + (v_pos[1] ** 2)
+
+    # if distance < centre_radius + safety_distance:
+    #     velocity[0] = (-v_pos[1] / square_sum) / distance
+    #     velocity[1] = (v_pos[0] / square_sum) / distance
+    
+    # velocity *= scale
+
+    # 3D
     v_pos = position - centre_pos
     distance = np.linalg.norm(v_pos)
     square_sum = (v_pos[0] ** 2) + (v_pos[1] ** 2)
@@ -101,7 +113,8 @@ def get_vortex_velocity(
     if distance < centre_radius + safety_distance:
         velocity[0] = (-v_pos[1] / square_sum) / distance
         velocity[1] = (v_pos[0] / square_sum) / distance
-    
+        
+
     velocity *= scale
     velocity = cap(velocity, max_speed)
 
@@ -117,16 +130,24 @@ def get_repulsive_velocity(
     max_speed: float,
 ) -> np.ndarray:
 
-    velocity = np.zeros(2, dtype=np.float32)
+    velocity = np.zeros(3, dtype=np.float32)
+    
+    # 2D
+    # x_dist = centre_pos[0] - position[0]
+    # y_dist = centre_pos[1] - position[1]
+    # distance = np.sqrt((x_dist**2) + (y_dist**2))
+    # theta = np.arctan2(y_dist, x_dist)
 
-    x_dist = centre_pos[0] - position[0]
-    y_dist = centre_pos[1] - position[1]
-    distance = np.sqrt((x_dist**2) + (y_dist**2))
-    theta = np.arctan2(y_dist, x_dist)
+    # if distance < centre_radius + repel_distance_limit:
+    #     velocity[0] = -(scale) * (np.cos(theta))
+    #     velocity[1] = -(scale) * (np.sin(theta))
 
-    if distance < centre_radius + repel_distance_limit:
-        velocity[0] = -(scale) * (np.cos(theta))
-        velocity[1] = -(scale) * (np.sin(theta))
+    # 3D
+    dist = position - centre_pos
+    limit = repel_distance_limit+centre_radius
+    if np.linalg.norm(dist)< centre_radius+repel_distance_limit:
+        velocity = scale*((1/dist) - (1/limit))
+
 
     velocity = cap(velocity, max_speed)
 
@@ -143,20 +164,24 @@ def get_attractive_velocity(
 ) -> np.ndarray:
     v = np.zeros(2, dtype=np.float32)
 
-    x_dist = centre_pos[0] - position[0]
-    y_dist = centre_pos[1] - position[1]
-    distance = np.sqrt((x_dist**2) + (y_dist**2))
-    theta = np.arctan2(y_dist, x_dist)
+    # 2D
+    # x_dist = centre_pos[0] - position[0]
+    # y_dist = centre_pos[1] - position[1]
+    # distance = np.sqrt((x_dist**2) + (y_dist**2))
+    # theta = np.arctan2(y_dist, x_dist)
 
-    v[0] = scale * max(distance - goal_radius, 0) * np.cos(theta)
-    v[1] = scale * max(distance - goal_radius, 0) * np.sin(theta)
+    # v[0] = scale * max(distance - goal_radius, 0) * np.cos(theta)
+    # v[1] = scale * max(distance - goal_radius, 0) * np.sin(theta)
 
-    if distance > goal_radius and distance < goal_radius + safety_distance:
-        v[0] = scale * (distance - goal_radius) * np.cos(theta)
-        v[1] = scale * (distance - goal_radius) * np.sin(theta)
-    elif distance > safety_distance + goal_radius:
-        v[0] = scale * safety_distance * np.cos(theta)
-        v[1] = scale * safety_distance * np.sin(theta)
+    # if distance > goal_radius and distance < goal_radius + safety_distance:
+    #     v[0] = scale * (distance - goal_radius) * np.cos(theta)
+    #     v[1] = scale * (distance - goal_radius) * np.sin(theta)
+    # elif distance > safety_distance + goal_radius:
+    #     v[0] = scale * safety_distance * np.cos(theta)
+    #     v[1] = scale * safety_distance * np.sin(theta)
+
+    # 3D
+    v = -scale*(position-centre_pos)
 
     v = cap(v, max_speed)
 
@@ -179,11 +204,13 @@ def get_velocity(
     max_speed,
 ):
    
-    other_spaceships_velocity = np.zeros(2)
-    other_goals_velocity = np.zeros(2)
-    obstacles_velocity = np.zeros(2)
+    other_spaceships_velocity = np.zeros(3)
+    other_goals_velocity = np.zeros(3)
+    obstacles_velocity = np.zeros(3)
+    attractive_velocity = np.zeros(3)
 
     goal_position = goal_positions[spaceship_index]
+
     attractive_velocity = get_attractive_velocity(
         position, goal_position, attractive_force_scale, max_speed, goal_radius, safety_distance
     )
@@ -242,7 +269,8 @@ def get_velocity(
             safety_distance,
             repulsive_force_scale,
             max_speed,
-        ) + 
+        ) 
+        + 
         get_vortex_velocity(
             position, obstacle_pos, obstacle_radius ,max_speed, vortex_scale, safety_distance
         )
@@ -252,6 +280,16 @@ def get_velocity(
     velocity = cap(velocity, max_speed)
 
     return velocity
+
+def check_for_collisions(spaceship_index, spaceships_positions, obstacle_positions, goal_positions, distance_limit):
+    current_spaceship_pos = spaceships_positions[spaceship_index]
+    other_spaceship_positions = np.delete(spaceships_positions, spaceship_index, axis=0)
+    other_goals = np.delete(goal_positions, spaceship_index, axis=0)
+
+    all_positions_to_check = np.concatenate([other_spaceship_positions,other_goals,obstacle_positions],axis=0)
+    for other_pos in all_positions_to_check:
+        if np.linalg.norm(current_spaceship_pos-other_pos,axis=-1) < distance_limit:
+            print("Collision Detected!")
 
 
 def perform_timestep(
@@ -270,8 +308,6 @@ def perform_timestep(
     num_spaceships = len(spaceships_positions)
     for spaceship_index in range(num_spaceships):
         position = spaceships_positions[spaceship_index]
-       
-       
 
         velocity = get_velocity(
             position,
@@ -290,6 +326,8 @@ def perform_timestep(
         )
         spaceships_positions[spaceship_index] += velocity
 
+        check_for_collisions(spaceship_index,spaceships_positions,obstacle_positions,goal_positions, safety_distance)
+        
     return spaceships_positions
 
 
@@ -314,62 +352,62 @@ def plot_vf(
     row = int(spaceship_index // axis_width)
     column = int(spaceship_index % axis_width)
 
+    num_points = 10
     
-    X, Y = np.meshgrid(
-        np.linspace(-map_size, map_size, 60), np.linspace(-map_size, map_size, 60)
+    X, Y, Z = np.meshgrid(
+        np.linspace(-map_size, map_size, num_points), np.linspace(-map_size, map_size, num_points), np.linspace(-map_size, map_size, num_points)
     )
     U = np.zeros_like(X)
     V = np.zeros_like(X)
+    W = np.zeros_like(X)
     for i in range(len(X)):
         for j in range(len(X[0])):
-            velocity = get_velocity(
-                np.array([X[i, j], Y[i, j]]),
-                goal_positions,
-                goal_radius,
-                spaceship_index,
-                spaceships_positions,
-                spaceship_radius,
-                obstacle_positions,
-                obstacle_radius,
-                safety_distance,
-                attractive_force_scale,
-                repulsive_force_scale,
-                vortex_scale,
-                max_speed,
-            )
-            U[i, j] = velocity[0]
-            V[i, j] = velocity[1]
-    axis[row, column].quiver(X, Y, U, V, units="width")
+            for k in range(len(X[0])):
+                velocity = get_velocity(
+                    np.array([X[i, j, k], Y[i, j, k], Z[i, j, k]]),
+                    goal_positions,
+                    goal_radius,
+                    spaceship_index,
+                    spaceships_positions,
+                    spaceship_radius,
+                    obstacle_positions,
+                    obstacle_radius,
+                    safety_distance,
+                    attractive_force_scale,
+                    repulsive_force_scale,
+                    vortex_scale,
+                    max_speed,
+                )
+                U[i, j, k] = velocity[0]
+                V[i, j, k] = velocity[1]
+                W[i, j, k] = velocity[2]
 
-    axis[row, column].add_artist(
-        plt.Circle(
-            spaceships_positions[spaceship_index], spaceship_radius, color="blue"
-        )
-    )
+   
+    axis[row][column].quiver(X, Y, Z, U, V, W, normalize = True, alpha=0.3)
 
-    axis[row, column].add_artist(plt.Circle(goal_positions[spaceship_index], goal_radius, color="purple"))
+    axis[row][column] = create_sphere(spaceships_positions[spaceship_index],spaceship_radius, axis[row][column], "cyan")
 
+    axis[row][column] = create_sphere(goal_positions[spaceship_index],goal_radius, axis[row][column], "magenta")
+    
     for i, spaceship in enumerate(spaceships_positions):
         if i == spaceship_index:
             continue
-        axis[row, column].add_artist(
-            plt.Circle(spaceship, spaceship_radius, color="red")
-        )
+        
+        axis[row][column] = create_sphere(spaceship, spaceship_radius, axis[row][column], "red")
+        
 
     for i, spaceship in enumerate(goal_positions):
         if i == spaceship_index:
             continue
-        axis[row, column].add_artist(
-            plt.Circle(goal_positions[i], goal_radius, color="firebrick")
-        )
+        axis[row][column] = create_sphere(goal_positions[i], goal_radius, axis[row][column], "firebrick")
+       
 
     for i, obstacle in enumerate(obstacle_positions):
+        
+        axis[row][column] = create_sphere(obstacle, obstacle_radius, axis[row][column], "black")
 
-        axis[row, column].add_artist(
-            plt.Circle(obstacle, obstacle_radius, color="gray")
-        )
 
-    axis[row, column].set_title(f"Spaceship {spaceship_index} Vector Field " + title)
+    axis[row][column].set_title(f"Spaceship {spaceship_index} Vector Field " + title)
     return axis
 
 
@@ -394,7 +432,15 @@ def plot_all_vfs(
     else:
         row, col = (num_spaceships // 2) + 1, num_spaceships // 2
 
-    figure, axis = plt.subplots(row, col, squeeze=False, figsize=(18, 18))
+    axis = []
+    index = 1
+    figure = plt.figure(figsize=(18, 18))
+    for i in range(row):
+        axis.append([])
+        for j in range(col):
+            ax = figure.add_subplot(int(f"{row}{col}{index}"), projection='3d')
+            axis[i].append(ax)
+            index += 1
 
     for spaceship_index in range(num_spaceships):
        
@@ -458,40 +504,41 @@ def build_video(video_name, file_dir, gif=False, fps=20):
     delete_files(file_dir)
 
 
-# TODO
-# def sphere():
-#     r = 0.05
-#     u, v = np.mgrid[0:2 * np.pi:30j, 0:np.pi:20j]
-#     x = np.cos(u) * np.sin(v)
-#     y = np.sin(u) * np.sin(v)
-#     z = np.cos(v)
-#     ax.plot_surface(x, y, z, cmap=plt.cm.YlGnBu_r)
+
+def create_sphere(position, sphere_radius, ax, colour):
+    u = np.linspace(0, 2 * np.pi, 10)
+    v = np.linspace(0, np.pi, 10)
+    x = position[0] + sphere_radius * np.outer(np.cos(u), np.sin(v))
+    y = position[1] + sphere_radius * np.outer(np.sin(u), np.sin(v))
+    z = position[2] + sphere_radius * np.outer(np.ones(np.size(u)), np.cos(v))
+    ax.plot_surface(x, y, z, color = colour)
+    return ax
 
 
 def main(
-    map_size=10,
+    map_size=5,
     num_spaceships=4,
-    goal_radius=0.7,
+    goal_radius=0.3,
     num_obstacles=3,
-    obstacle_radius=0.7,
-    spaceship_radius=0.4,
+    obstacle_radius=0.3,
+    spaceship_radius=0.1,
     safety_distance=1.0,
     max_speed=0.28,
     attractive_force_scale=0.28,
     repulsive_force_scale=0.28,
     vortex_scale=0.22,
-    timesteps=100,
+    timesteps=50,
     plots_folder="./plots",
 ):
 
     spaceships_positions = generate_random_positions(
-        num_spaceships, spaceship_radius, map_size, 2
+        num_spaceships, spaceship_radius, map_size
     )
     goal_positions = generate_random_positions(
-        num_spaceships, spaceship_radius, map_size, 2
+        num_spaceships, spaceship_radius, map_size
     )
     obstacle_positions = generate_random_positions(
-        num_obstacles, obstacle_radius, map_size, 2
+        num_obstacles, obstacle_radius, map_size
     )
 
     plot_all_vfs(
@@ -547,7 +594,8 @@ def main(
 
         plt.close()
 
-    build_video("anim", plots_folder, gif=False, fps=10)
+    print("Building Video...")
+    build_video("anim", plots_folder, gif=True, fps=5)
 
 
 if __name__ == "__main__":

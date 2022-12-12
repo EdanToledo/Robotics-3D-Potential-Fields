@@ -7,7 +7,6 @@ from os import listdir
 from os.path import isfile, join
 import re
 from tqdm import tqdm
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 def generate_random_positions(
     num_positions: int, object_radius: float, map_size: float, num_coordinates: int = 3
@@ -304,7 +303,17 @@ def perform_timestep(
     repulsive_force_scale,
     vortex_scale,
     max_speed,
-):
+    num_of_obstacles_meteorites,
+    map_size
+):  
+    # TODO Add different movement for meteor
+    for i in range(num_of_obstacles_meteorites):
+        if np.any(obstacle_positions[i]>map_size) or np.any(obstacle_positions[i]<-map_size):
+            pass
+        else:
+            obstacle_positions[i] = obstacle_positions[i] + np.array([max_speed,max_speed, max_speed])
+       
+
     num_spaceships = len(spaceships_positions)
     for spaceship_index in range(num_spaceships):
         position = spaceships_positions[spaceship_index]
@@ -326,9 +335,9 @@ def perform_timestep(
         )
         spaceships_positions[spaceship_index] += velocity
 
-        check_for_collisions(spaceship_index,spaceships_positions,obstacle_positions,goal_positions, safety_distance)
+        check_for_collisions(spaceship_index,spaceships_positions,obstacle_positions,goal_positions, 1e-3)
         
-    return spaceships_positions
+    return spaceships_positions, obstacle_positions
 
 
 def plot_vf(
@@ -352,7 +361,7 @@ def plot_vf(
     row = int(spaceship_index // axis_width)
     column = int(spaceship_index % axis_width)
 
-    num_points = 10
+    num_points = 5
     
     X, Y, Z = np.meshgrid(
         np.linspace(-map_size, map_size, num_points), np.linspace(-map_size, map_size, num_points), np.linspace(-map_size, map_size, num_points)
@@ -516,10 +525,11 @@ def create_sphere(position, sphere_radius, ax, colour):
 
 
 def main(
-    map_size=5,
+    map_size=10,
     num_spaceships=4,
     goal_radius=0.3,
     num_obstacles=3,
+    num_of_obstacles_meteorites = 1,
     obstacle_radius=0.3,
     spaceship_radius=0.1,
     safety_distance=1.0,
@@ -530,7 +540,7 @@ def main(
     timesteps=50,
     plots_folder="./plots",
 ):
-
+   
     spaceships_positions = generate_random_positions(
         num_spaceships, spaceship_radius, map_size
     )
@@ -540,6 +550,8 @@ def main(
     obstacle_positions = generate_random_positions(
         num_obstacles, obstacle_radius, map_size
     )
+    
+    assert num_of_obstacles_meteorites<num_obstacles
 
     plot_all_vfs(
         map_size,
@@ -573,6 +585,8 @@ def main(
             repulsive_force_scale,
             vortex_scale,
             max_speed,
+            num_of_obstacles_meteorites,
+            map_size
         )
 
         plot_all_vfs(

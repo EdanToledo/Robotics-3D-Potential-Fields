@@ -8,6 +8,7 @@ from os.path import isfile, join
 import re
 from tqdm import tqdm
 
+
 def generate_random_positions(
     num_positions: int, object_radius: float, map_size: float, num_coordinates: int = 3
 ) -> np.ndarray:
@@ -101,7 +102,7 @@ def get_vortex_velocity(
     # if distance < centre_radius + safety_distance:
     #     velocity[0] = (-v_pos[1] / square_sum) / distance
     #     velocity[1] = (v_pos[0] / square_sum) / distance
-    
+
     # velocity *= scale
 
     # 3D
@@ -112,7 +113,6 @@ def get_vortex_velocity(
     if distance < centre_radius + safety_distance:
         velocity[0] = (-v_pos[1] / square_sum) / distance
         velocity[1] = (v_pos[0] / square_sum) / distance
-        
 
     velocity *= scale
     velocity = cap(velocity, max_speed)
@@ -130,7 +130,7 @@ def get_repulsive_velocity(
 ) -> np.ndarray:
 
     velocity = np.zeros(3, dtype=np.float32)
-    
+
     # 2D
     # x_dist = centre_pos[0] - position[0]
     # y_dist = centre_pos[1] - position[1]
@@ -143,10 +143,9 @@ def get_repulsive_velocity(
 
     # 3D
     dist = position - centre_pos
-    limit = repel_distance_limit+centre_radius
-    if np.linalg.norm(dist)< centre_radius+repel_distance_limit:
-        velocity = scale*((1/dist) - (1/limit))
-
+    limit = repel_distance_limit + centre_radius
+    if np.linalg.norm(dist) < limit:
+        velocity = scale * ((1 / dist) - (1 / limit))
 
     velocity = cap(velocity, max_speed)
 
@@ -180,7 +179,8 @@ def get_attractive_velocity(
     #     v[1] = scale * safety_distance * np.sin(theta)
 
     # 3D
-    v = -scale*(position-centre_pos)
+    
+    v = -scale * (position - centre_pos)
 
     v = cap(v, max_speed)
 
@@ -202,7 +202,7 @@ def get_velocity(
     vortex_scale,
     max_speed,
 ):
-   
+
     other_spaceships_velocity = np.zeros(3)
     other_goals_velocity = np.zeros(3)
     obstacles_velocity = np.zeros(3)
@@ -211,44 +211,49 @@ def get_velocity(
     goal_position = goal_positions[spaceship_index]
 
     attractive_velocity = get_attractive_velocity(
-        position, goal_position, attractive_force_scale, max_speed, goal_radius, safety_distance
+        position,
+        goal_position,
+        attractive_force_scale,
+        max_speed,
+        goal_radius,
+        safety_distance,
     )
 
     for i, spaceship_pos in enumerate(spaceships_positions):
         if i == spaceship_index:
             continue
 
-        other_spaceships_velocity += (
-            get_repulsive_velocity(
+        other_spaceships_velocity += get_repulsive_velocity(
             position,
             spaceship_pos,
             spaceship_radius,
             safety_distance,
             repulsive_force_scale,
-            max_speed)
-         + get_vortex_velocity(
+            max_speed,
+            )
+        
+        other_spaceships_velocity +=get_vortex_velocity(
             position,
             spaceship_pos,
             spaceship_radius,
             max_speed,
             vortex_scale,
             safety_distance,
-        )
         )
 
     for i, other_goal_pos in enumerate(goal_positions):
         if i == spaceship_index:
             continue
-        
-        other_goals_velocity += (
-            get_repulsive_velocity(
+
+        other_goals_velocity += get_repulsive_velocity(
             position,
             other_goal_pos,
             goal_radius,
             safety_distance,
             repulsive_force_scale,
-            max_speed)
-         + get_vortex_velocity(
+            max_speed,
+        ) 
+        other_goals_velocity += get_vortex_velocity(
             position,
             other_goal_pos,
             goal_radius,
@@ -256,39 +261,70 @@ def get_velocity(
             vortex_scale,
             safety_distance,
         )
-        )
 
     for i, obstacle_pos in enumerate(obstacle_positions):
-        
-        obstacles_velocity += (
-        get_repulsive_velocity(
+
+        obstacles_velocity += get_repulsive_velocity(
             position,
             obstacle_pos,
             obstacle_radius,
             safety_distance,
             repulsive_force_scale,
             max_speed,
-        ) 
-        + 
-        get_vortex_velocity(
-            position, obstacle_pos, obstacle_radius ,max_speed, vortex_scale, safety_distance
         )
+        obstacles_velocity += get_vortex_velocity(
+            position,
+            obstacle_pos,
+            obstacle_radius,
+            max_speed,
+            vortex_scale,
+            safety_distance,
         )
 
-    velocity = attractive_velocity + other_spaceships_velocity + obstacles_velocity + other_goals_velocity
+    velocity = (
+        attractive_velocity
+        + other_spaceships_velocity
+        + obstacles_velocity
+        + other_goals_velocity
+    )
     velocity = cap(velocity, max_speed)
 
     return velocity
 
-def check_for_collisions(spaceship_index, spaceships_positions, obstacle_positions, goal_positions, distance_limit):
+
+def check_for_collisions(
+    spaceship_index,
+    spaceships_positions,
+    obstacle_positions,
+    goal_positions,
+    distance_limit,
+):
     current_spaceship_pos = spaceships_positions[spaceship_index]
     other_spaceship_positions = np.delete(spaceships_positions, spaceship_index, axis=0)
     other_goals = np.delete(goal_positions, spaceship_index, axis=0)
 
-    all_positions_to_check = np.concatenate([other_spaceship_positions,other_goals,obstacle_positions],axis=0)
+    all_positions_to_check = np.concatenate(
+        [other_spaceship_positions, other_goals, obstacle_positions], axis=0
+    )
     for other_pos in all_positions_to_check:
-        if np.linalg.norm(current_spaceship_pos-other_pos,axis=-1) < distance_limit:
+        if np.linalg.norm(current_spaceship_pos - other_pos, axis=-1) < distance_limit:
             print("Collision Detected!")
+            return True
+
+
+    return False
+
+def check_for_completion(
+    spaceships_positions,
+    goal_positions,
+    distance_limit,
+):
+   
+    for i, spaceship_pos in enumerate(spaceships_positions):
+        if np.linalg.norm(spaceship_pos - goal_positions[i], axis=-1) > distance_limit:
+            return False
+
+    return True
 
 
 def perform_timestep(
@@ -304,15 +340,16 @@ def perform_timestep(
     vortex_scale,
     max_speed,
     num_of_obstacles_meteorites,
-    map_size
-):  
+    map_size,
+    timestep,
+):
     # TODO Add different movement for meteor
     for i in range(num_of_obstacles_meteorites):
-        if np.any(obstacle_positions[i]>map_size) or np.any(obstacle_positions[i]<-map_size):
-            pass
-        else:
-            obstacle_positions[i] = obstacle_positions[i] + np.array([max_speed,max_speed, max_speed])
-       
+        obstacle_positions[i] = (
+                obstacle_positions[i]
+                + 0.2*(np.array([np.cos(timestep), np.sin(timestep), np.cos(timestep)])
+                * map_size/2) 
+            )
 
     num_spaceships = len(spaceships_positions)
     for spaceship_index in range(num_spaceships):
@@ -335,12 +372,18 @@ def perform_timestep(
         )
         spaceships_positions[spaceship_index] += velocity
 
-        check_for_collisions(spaceship_index,spaceships_positions,obstacle_positions,goal_positions, 1e-3)
-        
+        check_for_collisions(
+            spaceship_index,
+            spaceships_positions,
+            obstacle_positions,
+            goal_positions,
+            spaceship_radius + obstacle_radius,
+        )
+
     return spaceships_positions, obstacle_positions
 
 
-def plot_vf(
+def plot_2dvf(
     map_size,
     spaceship_index,
     spaceships_positions,
@@ -358,13 +401,15 @@ def plot_vf(
     axis=None,
     axis_width=2,
 ):
-    row = int(spaceship_index // axis_width)
-    column = int(spaceship_index % axis_width)
+    row = int(spaceship_index * 2 // axis_width)
+    column = int((spaceship_index * 2) % axis_width)
 
-    num_points = 5
-    
+    num_points = 20
+
     X, Y, Z = np.meshgrid(
-        np.linspace(-map_size, map_size, num_points), np.linspace(-map_size, map_size, num_points), np.linspace(-map_size, map_size, num_points)
+        np.linspace(-map_size, map_size, num_points),
+        np.linspace(-map_size, map_size, num_points),
+        np.linspace(-map_size, map_size, num_points),
     )
     U = np.zeros_like(X)
     V = np.zeros_like(X)
@@ -391,36 +436,248 @@ def plot_vf(
                 V[i, j, k] = velocity[1]
                 W[i, j, k] = velocity[2]
 
-   
-    axis[row][column].quiver(X, Y, Z, U, V, W, normalize = True, alpha=0.3)
+    # Plot XY Plane
+    axis[row][column].quiver(
+        X[:, :, 0], Y[:, :, 0], U[:, :, 0], V[:, :, 0], units="width"
+    )
+    # Plot XZ Plane
+    axis[row][column + 1].quiver(
+        X[0, :, :], Z[:, 0, :], U[0, :, :], W[:, 0, :], units="width"
+    )
 
-    axis[row][column] = create_sphere(spaceships_positions[spaceship_index],spaceship_radius, axis[row][column], "cyan")
+    # XY Plane
+    axis[row, column] = create_circle(
+        spaceships_positions[spaceship_index],
+        spaceship_radius,
+        axis[row, column],
+        "cyan",
+    )
 
-    axis[row][column] = create_sphere(goal_positions[spaceship_index],goal_radius, axis[row][column], "magenta")
-    
+    # # XZ Plane
+    axis[row, column + 1] = create_circle(
+        spaceships_positions[spaceship_index],
+        spaceship_radius,
+        axis[row, column + 1],
+        "cyan",
+        xy=False,
+    )
+
+    # # XY Plane
+    axis[row, column] = create_circle(
+        goal_positions[spaceship_index], goal_radius, axis[row][column], "magenta"
+    )
+    # # XZ Plane
+    axis[row, column + 1] = create_circle(
+        goal_positions[spaceship_index],
+        goal_radius,
+        axis[row][column + 1],
+        "magenta",
+        False,
+    )
+
     for i, spaceship in enumerate(spaceships_positions):
         if i == spaceship_index:
             continue
-        
-        axis[row][column] = create_sphere(spaceship, spaceship_radius, axis[row][column], "red")
-        
+        # XY
+        axis[row][column] = create_circle(
+            spaceship, spaceship_radius, axis[row][column], "red"
+        )
+        # XZ
+        axis[row][column + 1] = create_circle(
+            spaceship, spaceship_radius, axis[row][column + 1], "red", False
+        )
 
     for i, spaceship in enumerate(goal_positions):
         if i == spaceship_index:
             continue
-        axis[row][column] = create_sphere(goal_positions[i], goal_radius, axis[row][column], "firebrick")
-       
+        # XY
+        axis[row][column] = create_circle(
+            goal_positions[i], goal_radius, axis[row][column], "firebrick"
+        )
+        # XZ
+        axis[row][column + 1] = create_circle(
+            goal_positions[i], goal_radius, axis[row][column + 1], "firebrick", False
+        )
 
     for i, obstacle in enumerate(obstacle_positions):
-        
-        axis[row][column] = create_sphere(obstacle, obstacle_radius, axis[row][column], "black")
+        # XY
+        axis[row][column] = create_circle(
+            obstacle, obstacle_radius, axis[row][column], "black"
+        )
+        # XZ
+        axis[row][column + 1] = create_circle(
+            obstacle, obstacle_radius, axis[row][column + 1], "black", False
+        )
 
+    axis[row][column].set_title(f"Spaceship {spaceship_index} XY Vector Field " + title)
+    axis[row][column + 1].set_title(
+        f"Spaceship {spaceship_index} XZ Vector Field " + title
+    )
+    return axis
+
+
+def plot_all_2dvfs(
+    map_size,
+    num_spaceships,
+    spaceships_positions,
+    spaceship_radius,
+    goal_positions,
+    goal_radius,
+    obstacle_positions,
+    obstacle_radius,
+    safety_distance,
+    attractive_force_scale,
+    repulsive_force_scale,
+    vortex_scale,
+    max_speed,
+):
+
+    if num_spaceships % 2 == 0:
+        row, col = num_spaceships // 2, num_spaceships * 2 // 2
+    else:
+        row, col = (num_spaceships // 2) + 1, num_spaceships * 2 // 2
+
+    figure, axis = plt.subplots(row, col, squeeze=False, figsize=(18, 18))
+
+    for spaceship_index in range(num_spaceships):
+
+        axis = plot_2dvf(
+            map_size,
+            spaceship_index,
+            spaceships_positions,
+            spaceship_radius,
+            goal_positions,
+            goal_radius,
+            obstacle_positions,
+            obstacle_radius,
+            safety_distance,
+            attractive_force_scale,
+            repulsive_force_scale,
+            vortex_scale,
+            max_speed,
+            "",
+            axis,
+            col,
+        )
+
+    if num_spaceships % 2 != 0:
+        figure.delaxes(axis[-1, -1])
+
+    return figure, axis
+
+
+def create_circle(position, radius, axis, colour, xy=True):
+    if xy:
+        axis.add_artist(
+            plt.Circle(np.array([position[0], position[1]]), radius, color=colour)
+        )
+    else:
+        axis.add_artist(
+            plt.Circle(np.array([position[0], position[-1]]), radius, color=colour)
+        )
+    return axis
+
+
+def plot_3dvf(
+    map_size,
+    spaceship_index,
+    spaceships_positions,
+    spaceship_radius,
+    goal_positions,
+    goal_radius,
+    obstacle_positions,
+    obstacle_radius,
+    safety_distance,
+    attractive_force_scale,
+    repulsive_force_scale,
+    vortex_scale,
+    max_speed,
+    title="",
+    axis=None,
+    axis_width=2,
+):
+    row = int(spaceship_index // axis_width)
+    column = int(spaceship_index % axis_width)
+
+    num_points = int(map_size*4)
+
+    X, Y, Z = np.meshgrid(
+        np.linspace(-map_size, map_size, num_points),
+        np.linspace(-map_size, map_size, num_points),
+        np.linspace(-map_size, map_size, num_points),
+    )
+    U = np.zeros_like(X)
+    V = np.zeros_like(X)
+    W = np.zeros_like(X)
+    for i in range(len(X)):
+        for j in range(len(X[0])):
+            for k in range(len(X[0])):
+                velocity = get_velocity(
+                    np.array([X[i, j, k], Y[i, j, k], Z[i, j, k]]),
+                    goal_positions,
+                    goal_radius,
+                    spaceship_index,
+                    spaceships_positions,
+                    spaceship_radius,
+                    obstacle_positions,
+                    obstacle_radius,
+                    safety_distance,
+                    attractive_force_scale,
+                    repulsive_force_scale,
+                    vortex_scale,
+                    max_speed,
+                )
+                U[i, j, k] = velocity[0]
+                V[i, j, k] = velocity[1]
+                W[i, j, k] = velocity[2]
+
+    c = np.arctan2(V, U)
+    # Flatten and normalize
+    c = (c.ravel() - c.min()) / c.ptp()
+    # Repeat for each body line and two head lines
+    c = np.concatenate((c, np.repeat(c, 2)))
+    # Colormap
+    c = plt.cm.hsv(c)
+
+    axis[row][column].quiver(X, Y, Z, U, V, W, normalize=True, alpha=0.7, colors = c)
+
+    axis[row][column] = create_sphere(
+        spaceships_positions[spaceship_index],
+        spaceship_radius,
+        axis[row][column],
+        "cyan",
+    )
+
+    axis[row][column] = create_sphere(
+        goal_positions[spaceship_index], goal_radius, axis[row][column], "magenta"
+    )
+
+    for i, spaceship in enumerate(spaceships_positions):
+        if i == spaceship_index:
+            continue
+
+        axis[row][column] = create_sphere(
+            spaceship, spaceship_radius, axis[row][column], "red"
+        )
+
+    for i, spaceship in enumerate(goal_positions):
+        if i == spaceship_index:
+            continue
+        axis[row][column] = create_sphere(
+            goal_positions[i], goal_radius, axis[row][column], "firebrick"
+        )
+
+    for i, obstacle in enumerate(obstacle_positions):
+
+        axis[row][column] = create_sphere(
+            obstacle, obstacle_radius, axis[row][column], "black"
+        )
 
     axis[row][column].set_title(f"Spaceship {spaceship_index} Vector Field " + title)
     return axis
 
 
-def plot_all_vfs(
+def plot_all_3dvfs(
     map_size,
     num_spaceships,
     spaceships_positions,
@@ -443,17 +700,17 @@ def plot_all_vfs(
 
     axis = []
     index = 1
-    figure = plt.figure(figsize=(18, 18))
+    figure = plt.figure(figsize=(50, 50))
     for i in range(row):
         axis.append([])
         for j in range(col):
-            ax = figure.add_subplot(int(f"{row}{col}{index}"), projection='3d')
+            ax = figure.add_subplot(int(f"{row}{col}{index}"), projection="3d")
             axis[i].append(ax)
             index += 1
 
     for spaceship_index in range(num_spaceships):
-       
-        axis = plot_vf(
+
+        axis = plot_3dvf(
             map_size,
             spaceship_index,
             spaceships_positions,
@@ -513,34 +770,35 @@ def build_video(video_name, file_dir, gif=False, fps=20):
     delete_files(file_dir)
 
 
-
 def create_sphere(position, sphere_radius, ax, colour):
-    u = np.linspace(0, 2 * np.pi, 10)
-    v = np.linspace(0, np.pi, 10)
+    u = np.linspace(0, 2 * np.pi, 20)
+    v = np.linspace(0, np.pi, 20)
     x = position[0] + sphere_radius * np.outer(np.cos(u), np.sin(v))
     y = position[1] + sphere_radius * np.outer(np.sin(u), np.sin(v))
     z = position[2] + sphere_radius * np.outer(np.ones(np.size(u)), np.cos(v))
-    ax.plot_surface(x, y, z, color = colour)
+    ax.plot_surface(x, y, z, color=colour)
     return ax
 
 
 def main(
-    map_size=10,
+    map_size=6,
     num_spaceships=4,
     goal_radius=0.3,
-    num_obstacles=3,
-    num_of_obstacles_meteorites = 1,
+    num_obstacles=1,
+    num_of_obstacles_meteorites=0,
     obstacle_radius=0.3,
-    spaceship_radius=0.1,
+    spaceship_radius=0.2,
     safety_distance=1.0,
-    max_speed=0.28,
-    attractive_force_scale=0.28,
-    repulsive_force_scale=0.28,
+    max_speed=0.3,
+    attractive_force_scale=0.3,
+    repulsive_force_scale=0.3,
     vortex_scale=0.22,
-    timesteps=50,
+    timesteps=0,
     plots_folder="./plots",
+    three_dimensional_plotting=True,
+    gif = True
 ):
-   
+
     spaceships_positions = generate_random_positions(
         num_spaceships, spaceship_radius, map_size
     )
@@ -550,24 +808,40 @@ def main(
     obstacle_positions = generate_random_positions(
         num_obstacles, obstacle_radius, map_size
     )
-    
-    assert num_of_obstacles_meteorites<num_obstacles
 
-    plot_all_vfs(
-        map_size,
-        num_spaceships,
-        spaceships_positions,
-        spaceship_radius,
-        goal_positions,
-        goal_radius,
-        obstacle_positions,
-        obstacle_radius,
-        safety_distance,
-        attractive_force_scale,
-        repulsive_force_scale,
-        vortex_scale,
-        max_speed,
-    )
+    assert num_of_obstacles_meteorites < num_obstacles
+    if three_dimensional_plotting:
+        plot_all_3dvfs(
+            map_size,
+            num_spaceships,
+            spaceships_positions,
+            spaceship_radius,
+            goal_positions,
+            goal_radius,
+            obstacle_positions,
+            obstacle_radius,
+            safety_distance,
+            attractive_force_scale,
+            repulsive_force_scale,
+            vortex_scale,
+            max_speed,
+        )
+    else:
+        plot_all_2dvfs(
+            map_size,
+            num_spaceships,
+            spaceships_positions,
+            spaceship_radius,
+            goal_positions,
+            goal_radius,
+            obstacle_positions,
+            obstacle_radius,
+            safety_distance,
+            attractive_force_scale,
+            repulsive_force_scale,
+            vortex_scale,
+            max_speed,
+        )
 
     plt.savefig(f"{plots_folder}/1.png")
 
@@ -586,30 +860,51 @@ def main(
             vortex_scale,
             max_speed,
             num_of_obstacles_meteorites,
-            map_size
-        )
-
-        plot_all_vfs(
             map_size,
-            num_spaceships,
-            spaceships_positions,
-            spaceship_radius,
-            goal_positions,
-            goal_radius,
-            obstacle_positions,
-            obstacle_radius,
-            safety_distance,
-            attractive_force_scale,
-            repulsive_force_scale,
-            vortex_scale,
-            max_speed,
+            i,
         )
+        if three_dimensional_plotting:
+            plot_all_3dvfs(
+                map_size,
+                num_spaceships,
+                spaceships_positions,
+                spaceship_radius,
+                goal_positions,
+                goal_radius,
+                obstacle_positions,
+                obstacle_radius,
+                safety_distance,
+                attractive_force_scale,
+                repulsive_force_scale,
+                vortex_scale,
+                max_speed,
+            )
+        else:
+            plot_all_2dvfs(
+                map_size,
+                num_spaceships,
+                spaceships_positions,
+                spaceship_radius,
+                goal_positions,
+                goal_radius,
+                obstacle_positions,
+                obstacle_radius,
+                safety_distance,
+                attractive_force_scale,
+                repulsive_force_scale,
+                vortex_scale,
+                max_speed,
+            )
         plt.savefig(f"{plots_folder}/{i}.png")
 
         plt.close()
 
+        if check_for_completion(spaceships_positions, goal_positions, distance_limit=spaceship_radius+goal_radius):
+            print("All Spaceships have made it to their goals...")
+            break
+
     print("Building Video...")
-    build_video("anim", plots_folder, gif=True, fps=5)
+    build_video("anim", plots_folder, gif=gif, fps=5)
 
 
 if __name__ == "__main__":

@@ -7,6 +7,23 @@ from os import listdir
 from os.path import isfile, join
 import re
 from tqdm import tqdm
+import random
+import csv
+
+
+def generate_equally_spaced_positions(num_positions, map_size, num_points):
+
+    discretised_range = np.linspace(-map_size + 1, map_size - 1, num_points)
+    positions = [
+        (x, y, z)
+        for x in discretised_range
+        for y in discretised_range
+        for z in discretised_range
+    ]
+
+    random_positions = random.sample(positions, num_positions)
+
+    return np.array(random_positions)
 
 
 def generate_random_positions(
@@ -34,6 +51,26 @@ def generate_random_positions(
     return positions
 
 
+def generate_all_positions(
+    num_spaceships,
+    num_obstacles,
+    map_size,
+    spaceship_radius,
+    goal_radius,
+    obstacle_radius,
+):
+
+    positions = generate_equally_spaced_positions(
+        2 * num_spaceships + num_obstacles, map_size, int(map_size * 3)
+    )
+
+    spaceships_positions = positions[:num_spaceships]
+    goal_positions = positions[num_spaceships : 2 * num_spaceships]
+    obstacle_positions = positions[2 * num_spaceships :]
+
+    return spaceships_positions, goal_positions, obstacle_positions
+
+
 def cap(velocity: np.ndarray, max_speed: float) -> np.ndarray:
     """Caps a velocity to be below max speed.
 
@@ -44,7 +81,7 @@ def cap(velocity: np.ndarray, max_speed: float) -> np.ndarray:
     Returns:
         np.ndarray: The capped velocity.
     """
-    n = np.linalg.norm(velocity, axis=-1)
+    n = np.linalg.norm(velocity, axis=-1) + 1e-8
     if n > max_speed:
         return (velocity / n) * max_speed
     return velocity
@@ -111,8 +148,8 @@ def get_vortex_velocity(
     square_sum = (v_pos[0] ** 2) + (v_pos[1] ** 2)
 
     if distance < centre_radius + safety_distance:
-        velocity[0] = (-v_pos[1] / square_sum) / distance
-        velocity[1] = (v_pos[0] / square_sum) / distance
+        velocity[0] = (-v_pos[1] / (square_sum + 1e-8)) / distance
+        velocity[1] = (v_pos[0] / (square_sum + 1e-8)) / distance
 
     velocity *= scale
     velocity = cap(velocity, max_speed)
@@ -145,7 +182,7 @@ def get_repulsive_velocity(
     dist = position - centre_pos
     limit = repel_distance_limit + centre_radius
     if np.linalg.norm(dist) < limit:
-        velocity = scale * ((1 / dist) - (1 / limit))
+        velocity = scale * ((1 / (dist + 1e-8)) - (1 / limit))
 
     velocity = cap(velocity, max_speed)
 
@@ -179,7 +216,7 @@ def get_attractive_velocity(
     #     v[1] = scale * safety_distance * np.sin(theta)
 
     # 3D
-    
+
     v = -scale * (position - centre_pos)
 
     v = cap(v, max_speed)
@@ -230,9 +267,9 @@ def get_velocity(
             safety_distance,
             repulsive_force_scale,
             max_speed,
-            )
-        
-        other_spaceships_velocity +=get_vortex_velocity(
+        )
+
+        other_spaceships_velocity += get_vortex_velocity(
             position,
             spaceship_pos,
             spaceship_radius,
@@ -252,7 +289,7 @@ def get_velocity(
             safety_distance,
             repulsive_force_scale,
             max_speed,
-        ) 
+        )
         other_goals_velocity += get_vortex_velocity(
             position,
             other_goal_pos,
@@ -308,18 +345,18 @@ def check_for_collisions(
     )
     for other_pos in all_positions_to_check:
         if np.linalg.norm(current_spaceship_pos - other_pos, axis=-1) < distance_limit:
-            print("Collision Detected!")
+            # print(f"Collision Detected for spaceship {spaceship_index}")
             return True
 
-
     return False
+
 
 def check_for_completion(
     spaceships_positions,
     goal_positions,
     distance_limit,
 ):
-   
+
     for i, spaceship_pos in enumerate(spaceships_positions):
         if np.linalg.norm(spaceship_pos - goal_positions[i], axis=-1) > distance_limit:
             return False
@@ -343,13 +380,13 @@ def perform_timestep(
     map_size,
     timestep,
 ):
-    # TODO Add different movement for meteor
+
     for i in range(num_of_obstacles_meteorites):
-        obstacle_positions[i] = (
-                obstacle_positions[i]
-                + 0.2*(np.array([np.cos(timestep), np.sin(timestep), np.cos(timestep)])
-                * map_size/2) 
-            )
+        obstacle_positions[i] = obstacle_positions[i] + 0.2 * (
+            np.array([np.cos(timestep), np.sin(timestep), np.cos(timestep)])
+            * map_size
+            / 2
+        )
 
     num_spaceships = len(spaceships_positions)
     for spaceship_index in range(num_spaceships):
@@ -372,15 +409,17 @@ def perform_timestep(
         )
         spaceships_positions[spaceship_index] += velocity
 
-        check_for_collisions(
+        collided = check_for_collisions(
             spaceship_index,
             spaceships_positions,
             obstacle_positions,
             goal_positions,
-            spaceship_radius + obstacle_radius,
+            spaceship_radius + obstacle_radius + 0.01,
         )
+        if collided:
+            return collided
 
-    return spaceships_positions, obstacle_positions
+    return False
 
 
 def plot_2dvf(
@@ -599,7 +638,7 @@ def plot_3dvf(
     row = int(spaceship_index // axis_width)
     column = int(spaceship_index % axis_width)
 
-    num_points = int(map_size*4)
+    num_points = int(map_size * 1.5)
 
     X, Y, Z = np.meshgrid(
         np.linspace(-map_size, map_size, num_points),
@@ -639,7 +678,7 @@ def plot_3dvf(
     # Colormap
     c = plt.cm.hsv(c)
 
-    axis[row][column].quiver(X, Y, Z, U, V, W, normalize=True, alpha=0.7, colors = c)
+    axis[row][column].quiver(X, Y, Z, U, V, W, normalize=True, alpha=0.7, colors=c)
 
     axis[row][column] = create_sphere(
         spaceships_positions[spaceship_index],
@@ -771,8 +810,8 @@ def build_video(video_name, file_dir, gif=False, fps=20):
 
 
 def create_sphere(position, sphere_radius, ax, colour):
-    u = np.linspace(0, 2 * np.pi, 20)
-    v = np.linspace(0, np.pi, 20)
+    u = np.linspace(0, 2 * np.pi, 10)
+    v = np.linspace(0, np.pi, 10)
     x = position[0] + sphere_radius * np.outer(np.cos(u), np.sin(v))
     y = position[1] + sphere_radius * np.outer(np.sin(u), np.sin(v))
     z = position[2] + sphere_radius * np.outer(np.ones(np.size(u)), np.cos(v))
@@ -780,11 +819,72 @@ def create_sphere(position, sphere_radius, ax, colour):
     return ax
 
 
-def main(
-    map_size=6,
+def eval(
+    map_size,
+    num_spaceships,
+    goal_radius,
+    num_obstacles,
+    num_of_obstacles_meteorites,
+    obstacle_radius,
+    spaceship_radius,
+    safety_distance,
+    max_speed,
+    attractive_force_scale,
+    repulsive_force_scale,
+    vortex_scale,
+    timesteps,
+):
+    """Evaluates a single episode. Returns True if it completed without any collisions. returns false if there were collisions or the spaceships didn't reach their goal."""
+
+    spaceships_positions, goal_positions, obstacle_positions = generate_all_positions(
+        num_spaceships,
+        num_obstacles,
+        map_size,
+        spaceship_radius,
+        goal_radius,
+        obstacle_radius,
+    )
+
+    assert num_of_obstacles_meteorites <= num_obstacles
+
+    for i in range(timesteps):
+        collision = perform_timestep(
+            spaceships_positions,
+            spaceship_radius,
+            goal_positions,
+            goal_radius,
+            obstacle_positions,
+            obstacle_radius,
+            safety_distance,
+            attractive_force_scale,
+            repulsive_force_scale,
+            vortex_scale,
+            max_speed,
+            num_of_obstacles_meteorites,
+            map_size,
+            i,
+        )
+
+        if collision:
+            return False, i, False
+
+        if check_for_completion(
+            spaceships_positions,
+            goal_positions,
+            distance_limit=spaceship_radius + goal_radius,
+        ):
+            # print("All spaceships have made it to their goals...")
+            return True, i, False
+
+    # print("Not all spaceships have made it to their goals...")
+    return False, timesteps, True
+
+
+def experiment(
+    map_size=5,
     num_spaceships=4,
     goal_radius=0.3,
-    num_obstacles=1,
+    num_obstacles=3,
     num_of_obstacles_meteorites=0,
     obstacle_radius=0.3,
     spaceship_radius=0.2,
@@ -793,23 +893,188 @@ def main(
     attractive_force_scale=0.3,
     repulsive_force_scale=0.3,
     vortex_scale=0.22,
-    timesteps=0,
-    plots_folder="./plots",
-    three_dimensional_plotting=True,
-    gif = True
+    timesteps=150,
+    episodes=100,
 ):
 
-    spaceships_positions = generate_random_positions(
-        num_spaceships, spaceship_radius, map_size
+    success = []
+    failure_due_to_local_minima = []
+    failure_due_to_collision = []
+    episode_length = []
+    for i in tqdm(range(episodes)):
+        result, time, no_collision = eval(
+            map_size,
+            num_spaceships,
+            goal_radius,
+            num_obstacles,
+            num_of_obstacles_meteorites,
+            obstacle_radius,
+            spaceship_radius,
+            safety_distance,
+            max_speed,
+            attractive_force_scale,
+            repulsive_force_scale,
+            vortex_scale,
+            timesteps,
+        )
+        episode_length.append(time)
+        if result:
+            success.append(1)
+        else:
+            success.append(0)
+            if no_collision:
+                failure_due_to_local_minima.append(1)
+                failure_due_to_collision.append(0)
+            else:
+                failure_due_to_local_minima.append(0)
+                failure_due_to_collision.append(1)
+
+    print(f"Average Completion Rate: {np.mean(success)}")
+    print(f"Average Length of Episode: {np.mean(episode_length)}")
+    print(f"Average Failure Due to Collision: {np.mean(failure_due_to_collision)}")
+    print(
+        f"Average Failure Due to Local Minima: {np.mean(failure_due_to_local_minima)}"
     )
-    goal_positions = generate_random_positions(
-        num_spaceships, spaceship_radius, map_size
-    )
-    obstacle_positions = generate_random_positions(
-        num_obstacles, obstacle_radius, map_size
+    return (
+        np.mean(success),
+        np.mean(episode_length),
+        np.mean(failure_due_to_collision),
+        np.mean(failure_due_to_local_minima),
     )
 
-    assert num_of_obstacles_meteorites < num_obstacles
+
+def generate_data(
+    map_size=5,
+    num_spaceships=4,
+    goal_radius=0.3,
+    num_obstacles=3,
+    num_of_obstacles_meteorites=0,
+    obstacle_radius=0.3,
+    spaceship_radius=0.2,
+    safety_distance=1.0,
+    max_speed=0.3,
+    attractive_force_scale=0.3,
+    repulsive_force_scale=0.3,
+    vortex_scale=0.22,
+    timesteps=150,
+    episodes=100,
+):
+    training_data = []
+
+    count = 0
+    for ep in tqdm(range(episodes)):
+        (
+            spaceships_positions,
+            goal_positions,
+            obstacle_positions,
+        ) = generate_all_positions(
+            num_spaceships,
+            num_obstacles,
+            map_size,
+            spaceship_radius,
+            goal_radius,
+            obstacle_radius,
+        )
+
+        for timestep in range(timesteps):
+            for i in range(num_of_obstacles_meteorites):
+                obstacle_positions[i] = obstacle_positions[i] + 0.2 * (
+                    np.array([np.cos(timestep), np.sin(timestep), np.cos(timestep)])
+                    * map_size
+                    / 2
+                )
+
+            
+            num_spaceships = len(spaceships_positions)
+            velocities = []
+            for spaceship_index in range(num_spaceships):
+                position = spaceships_positions[spaceship_index]
+
+                velocity = get_velocity(
+                    position,
+                    goal_positions,
+                    goal_radius,
+                    spaceship_index,
+                    spaceships_positions,
+                    spaceship_radius,
+                    obstacle_positions,
+                    obstacle_radius,
+                    safety_distance,
+                    attractive_force_scale,
+                    repulsive_force_scale,
+                    vortex_scale,
+                    max_speed,
+                )
+                velocities.append(velocity)
+
+                spaceships_positions[spaceship_index] += velocity
+
+                collided = check_for_collisions(
+                    spaceship_index,
+                    spaceships_positions,
+                    obstacle_positions,
+                    goal_positions,
+                    spaceship_radius + obstacle_radius + 0.01,
+                )
+                if collided:
+                    break
+
+            if collided:
+                break
+                
+           
+            for spaceship_index in range(num_spaceships):
+                training_data.append([])
+                training_data[count].append(map_size)
+                training_data[count].append(num_spaceships)
+                training_data[count].extend(spaceships_positions[spaceship_index].flatten())
+                training_data[count].extend(goal_positions[spaceship_index].flatten())
+                training_data[count].extend(spaceships_positions[np.arange(len(spaceships_positions))!=spaceship_index].flatten())
+                training_data[count].extend(goal_positions[np.arange(len(goal_positions))!=spaceship_index].flatten())
+                training_data[count].extend(obstacle_positions.flatten())
+                training_data[count].extend(velocities[spaceship_index])
+                count += 1
+
+            if check_for_completion(
+                spaceships_positions,
+                goal_positions,
+                distance_limit=spaceship_radius + goal_radius,
+            ):
+
+                break
+
+    np.save("dataset.pl", training_data, allow_pickle=True)
+    # return training_data
+
+
+def main(
+    map_size=5,
+    num_spaceships=4,
+    goal_radius=0.3,
+    num_obstacles=3,
+    num_of_obstacles_meteorites=3,
+    obstacle_radius=0.3,
+    spaceship_radius=0.2,
+    safety_distance=1.0,
+    max_speed=0.4,
+    attractive_force_scale=0.4,
+    repulsive_force_scale=0.4,
+    vortex_scale=0.22,
+    timesteps=50,
+    plots_folder="./plots",
+    three_dimensional_plotting=True,
+    gif=True,
+):
+    spaceships_positions, goal_positions, obstacle_positions = generate_all_positions(
+        num_spaceships,
+        num_obstacles,
+        map_size,
+        spaceship_radius,
+        goal_radius,
+        obstacle_radius,
+    )
+
+    assert num_of_obstacles_meteorites <= num_obstacles
     if three_dimensional_plotting:
         plot_all_3dvfs(
             map_size,
@@ -899,13 +1164,65 @@ def main(
 
         plt.close()
 
-        if check_for_completion(spaceships_positions, goal_positions, distance_limit=spaceship_radius+goal_radius):
+        if check_for_completion(
+            spaceships_positions,
+            goal_positions,
+            distance_limit=spaceship_radius + goal_radius,
+        ):
             print("All Spaceships have made it to their goals...")
             break
 
     print("Building Video...")
     build_video("anim", plots_folder, gif=gif, fps=5)
 
+def run_experiment():
+    success_rates = []
+    lengths = []
+    collision_failures = []
+    local_minimas = []
+
+    
+    success_rate, length, collision_failure, local_minima = experiment(
+        map_size=10,
+        timesteps=500,
+        episodes=1000,
+        spaceship_radius=0.1,
+        safety_distance=0.3,
+        vortex_scale=0.25,
+        num_obstacles=5,
+        num_of_obstacles_meteorites=2,
+        num_spaceships=4,
+    )
+    success_rates.append(success_rate)
+    lengths.append(length)
+    collision_failures.append(collision_failure)
+    local_minimas.append(local_minima)
+
+    fig, axes = plt.subplots(2, 2)
+
+    axes[0, 0].plot(success_rates)
+    axes[0, 0].set_title("Average percentage of successfully completed runs")
+    axes[0, 1].plot(lengths)
+    axes[0, 1].set_title("Average length of runs")
+    axes[1, 0].plot(collision_failures)
+    axes[1, 0].set_title("Average percentage of failures due to collisions")
+    axes[1, 1].plot(local_minimas)
+    axes[1, 1].set_title("Average percentage of failures due to local minimas")
+    plt.show()
 
 if __name__ == "__main__":
-    main()
+    # main()
+
+    # run_experiment()
+    
+    generate_data(
+        map_size=10,
+        timesteps=500,
+        episodes=10000,
+        spaceship_radius=0.1,
+        safety_distance=0.3,
+        vortex_scale=0.25,
+        num_obstacles=5,
+        num_of_obstacles_meteorites=2,
+        num_spaceships=4,
+    )

@@ -1043,7 +1043,7 @@ def generate_data(
 
                 break
 
-    np.save("dataset.pl", training_data, allow_pickle=True)
+    np.save("dataset", training_data, allow_pickle=True)
     # return training_data
 
 
@@ -1175,30 +1175,40 @@ def main(
     print("Building Video...")
     build_video("anim", plots_folder, gif=gif, fps=5)
 
-def run_experiment():
+def run_experiment(min_range, max_range, variable, optional_set = None):
     success_rates = []
     lengths = []
     collision_failures = []
     local_minimas = []
-
-    
-    success_rate, length, collision_failure, local_minima = experiment(
-        map_size=10,
-        timesteps=500,
-        episodes=1000,
-        spaceship_radius=0.1,
-        safety_distance=0.3,
-        vortex_scale=0.25,
-        num_obstacles=5,
-        num_of_obstacles_meteorites=2,
-        num_spaceships=4,
-    )
-    success_rates.append(success_rate)
-    lengths.append(length)
-    collision_failures.append(collision_failure)
-    local_minimas.append(local_minima)
+    params = {"map_size":10,
+            "timesteps":500,
+            "episodes":1000,
+            "spaceship_radius":0.1,
+            "safety_distance":0.3,
+            "vortex_scale":0.25,
+            "num_obstacles":5,
+            "num_of_obstacles_meteorites":2,
+            "num_spaceships":4}
+    if optional_set is not None:
+        values = optional_set
+    else:
+        values = range(min_range, max_range)
+    for i in values:
+        params[variable] = i
+        success_rate, length, collision_failure, local_minima = experiment(
+            **params
+        )
+        success_rates.append(success_rate)
+        lengths.append(length)
+        collision_failures.append(collision_failure)
+        local_minimas.append(local_minima)
 
     fig, axes = plt.subplots(2, 2)
+
+    print("Success Rates:",success_rates)
+    print("Lengths:",lengths)
+    print("Collision Failures:",collision_failures)
+    print("Local Minimas:",local_minimas)
 
     axes[0, 0].plot(success_rates)
     axes[0, 0].set_title("Average percentage of successfully completed runs")
@@ -1213,16 +1223,17 @@ def run_experiment():
 if __name__ == "__main__":
     # main()
 
-    # run_experiment()
+    # run_experiment(2,12,"num_spaceships")
     
-    generate_data(
-        map_size=10,
-        timesteps=500,
-        episodes=10000,
-        spaceship_radius=0.1,
-        safety_distance=0.3,
-        vortex_scale=0.25,
-        num_obstacles=5,
-        num_of_obstacles_meteorites=2,
-        num_spaceships=4,
-    )
+    # generate_data(
+    #     map_size=10,
+    #     timesteps=500,
+    #     episodes=20000,
+    #     spaceship_radius=0.1,
+    #     safety_distance=0.3,
+    #     vortex_scale=0.25,
+    #     num_obstacles=5,
+    #     num_of_obstacles_meteorites=2,
+    #     num_spaceships=4,
+    # )
+    pass

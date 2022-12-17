@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 
 from main import check_for_collisions, check_for_completion, generate_all_positions
 
-test = np.load("dataset.pl.npy", allow_pickle=True)
+
 
 
 class CustomDataset(Dataset):
@@ -35,23 +35,23 @@ class VectorFieldNeuralNetwork(pl.LightningModule):
         super().__init__()
         self.num_spaceships = num_spaceships
         self.other_goal_positions_encoder = nn.GRU(
-            batch_first=True, input_size=1, hidden_size=8
+            batch_first=True, input_size=1, hidden_size=16
         )
         self.other_spaceship_positions_encoder = nn.GRU(
-            batch_first=True, input_size=1, hidden_size=8
+            batch_first=True, input_size=1, hidden_size=16
         )
-        self.obstacles_encoder = nn.GRU(batch_first=True, input_size=1, hidden_size=8)
-        self.spaceship_position_encoder = nn.Linear(3, 8)
-        self.goal_position_encoder = nn.Linear(3, 8)
-        self.map_size_encoder = nn.Linear(1, 8)
-        self.num_spaceships_encoder = nn.Linear(1, 8)
+        self.obstacles_encoder = nn.GRU(batch_first=True, input_size=1, hidden_size=16)
+        self.spaceship_position_encoder = nn.Linear(3, 16)
+        self.goal_position_encoder = nn.Linear(3, 16)
+        self.map_size_encoder = nn.Linear(1, 16)
+        self.num_spaceships_encoder = nn.Linear(1, 16)
 
         self.final_layer = nn.Sequential(
-            nn.Linear(8 * 7, 64),
+            nn.Linear(16 * 7, 128),
             nn.ReLU(),
-            nn.Linear(64, 64),
+            nn.Linear(128, 128),
             nn.ReLU(),
-            nn.Linear(64, 3),
+            nn.Linear(128, 3),
         )
 
     def forward(self, x):
@@ -61,17 +61,17 @@ class VectorFieldNeuralNetwork(pl.LightningModule):
         spaceship_pos_embedding = self.spaceship_position_encoder(x[:, 2 : 2 + 3])
         goal_pos_embedding = self.goal_position_encoder(x[:, 5 : 5 + 3])
         other_spaceship_pos_embedding, _ = self.other_spaceship_positions_encoder(
-            x[:, 8 : 8 + 3 * self.num_spaceships].reshape(x.shape[0], -1, 1)
+            x[:, 8 : 8 + 3 * (self.num_spaceships-1)].reshape(x.shape[0], -1, 1)
         )
         other_spaceship_pos_embedding = other_spaceship_pos_embedding[:, -1, :]
         other_goal_pos_embedding, _ = self.other_goal_positions_encoder(
-            x[:, 8 + 3 * self.num_spaceships : 8 + 6 * self.num_spaceships].reshape(
+            x[:, 8 + 3 * (self.num_spaceships-1) : 8 + 6 * (self.num_spaceships-1)].reshape(
                 x.shape[0], -1, 1
             )
         )
         other_goal_pos_embedding = other_goal_pos_embedding[:, -1, :]
         obstacles_embedding, _ = self.obstacles_encoder(
-            x[:, 8 + 6 * self.num_spaceships :].reshape(x.shape[0], -1, 1)
+            x[:, 8 + 6 * self.num_spaceships-1 :].reshape(x.shape[0], -1, 1)
         )
         obstacles_embedding = obstacles_embedding[:, -1, :]
 
@@ -103,7 +103,7 @@ class VectorFieldNeuralNetwork(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=5e-4)
+        optimizer = optim.Adam(self.parameters(), lr=1e-4)
         return optimizer
 
 
@@ -305,28 +305,41 @@ def experiment(
     )
 
 
-def run_experiment(neural_net):
+def run_experiment(neural_net, min_range, max_range, variable):
     success_rates = []
     lengths = []
     collision_failures = []
     local_minimas = []
+    params = {"map_size":10,
+            "timesteps":500,
+            "episodes":1000,
+            "spaceship_radius":0.1,
+            "safety_distance":0.3,
+            "vortex_scale":0.25,
+            "num_obstacles":5,
+            "num_of_obstacles_meteorites":2,
+            "num_spaceships":4,
+            "neural_net" : neural_net}
+    
+    values = range(min_range, max_range)
+   
+       
+    for i in values:
+        params[variable] = i
+        # params["num_of_obstacles_meteorites"] = i-2
+        success_rate, length, collision_failure, local_minima = experiment(
+            **params
+        )
+        success_rates.append(success_rate)
+        lengths.append(length)
+        collision_failures.append(collision_failure)
+        local_minimas.append(local_minima)
 
-    success_rate, length, collision_failure, local_minima = experiment(
-        map_size=10,
-        timesteps=500,
-        episodes=1000,
-        spaceship_radius=0.1,
-        safety_distance=0.3,
-        vortex_scale=0.25,
-        num_obstacles=5,
-        num_of_obstacles_meteorites=2,
-        num_spaceships=6,
-        neural_net=neural_net,
-    )
-    success_rates.append(success_rate)
-    lengths.append(length)
-    collision_failures.append(collision_failure)
-    local_minimas.append(local_minima)
+
+    print("Success Rates:",success_rates)
+    print("Lengths:",lengths)
+    print("Collision Failures:",collision_failures)
+    print("Local Minimas:",local_minimas)
 
     fig, axes = plt.subplots(2, 2)
 
@@ -342,28 +355,33 @@ def run_experiment(neural_net):
 
 
 def main():
+    load_check = False
+    train = True
 
-    vf_nn = VectorFieldNeuralNetwork()
+    trained_on_num_spaceships=4
+    vf_nn = VectorFieldNeuralNetwork(num_spaceships=trained_on_num_spaceships)
+    if load_check:
+        checkpoint = "./lightning_logs/version_4/checkpoints/epoch=6-step=61285.ckpt"
+        vf_nn = VectorFieldNeuralNetwork.load_from_checkpoint(checkpoint, num_spaceships=trained_on_num_spaceships)
 
     # setup data
-    # dataset = CustomDataset(test)
-    # train_loader = DataLoader(
-    #     dataset, batch_size=128, shuffle=True, num_workers=4, prefetch_factor=2
-    # )
+    if train:
+        data = np.load("bigdataset.npy", allow_pickle=True)
+        dataset = CustomDataset(data)
+        train_loader = DataLoader(
+            dataset, batch_size=128, shuffle=True, num_workers=8, prefetch_factor=2
+        )
 
-    # train the model (hint: here are some helpful Trainer arguments for rapid idea iteration)
-    # trainer = pl.Trainer(limit_train_batches=1.0, max_epochs=10)
-    # trainer.fit(model=vf_nn, train_dataloaders=train_loader)
+    
+        trainer = pl.Trainer(limit_train_batches=1.0, max_epochs=20)
+        trainer.fit(model=vf_nn, train_dataloaders=train_loader)
+    else:
+       
+        # # choose your trained nn.Module
+        neural_net = vf_nn
+        neural_net.eval()
 
-    # load checkpoint
-    checkpoint = "./lightning_logs/version_0/checkpoints/epoch=9-step=175210.ckpt"
-    vf_nn = VectorFieldNeuralNetwork.load_from_checkpoint(checkpoint, num_spaceships=6)
-
-    # # choose your trained nn.Module
-    neural_net = vf_nn
-    neural_net.eval()
-
-    run_experiment(neural_net)
+        run_experiment(neural_net, 2, 15, "map_size")
 
 
 if __name__ == "__main__":

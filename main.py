@@ -336,6 +336,7 @@ def check_for_collisions(
     goal_positions,
     distance_limit,
 ):
+    
     current_spaceship_pos = spaceships_positions[spaceship_index]
     other_spaceship_positions = np.delete(spaceships_positions, spaceship_index, axis=0)
     other_goals = np.delete(goal_positions, spaceship_index, axis=0)
@@ -958,92 +959,103 @@ def generate_data(
     vortex_scale=0.22,
     timesteps=150,
     episodes=100,
+    dataset_name : str = "dataset"
 ):
     training_data = []
-
-    count = 0
-    for ep in tqdm(range(episodes)):
-        (
-            spaceships_positions,
-            goal_positions,
-            obstacle_positions,
-        ) = generate_all_positions(
-            num_spaceships,
-            num_obstacles,
-            map_size,
-            spaceship_radius,
-            goal_radius,
-            obstacle_radius,
-        )
-
-        for timestep in range(timesteps):
-            for i in range(num_of_obstacles_meteorites):
-                obstacle_positions[i] = obstacle_positions[i] + 0.2 * (
-                    np.array([np.cos(timestep), np.sin(timestep), np.cos(timestep)])
-                    * map_size
-                    / 2
-                )
-
+    
+    episode_counter = 0
+    with tqdm(total=episodes) as pbar:
+        while episode_counter<episodes:
             
-            num_spaceships = len(spaceships_positions)
-            velocities = []
-            for spaceship_index in range(num_spaceships):
-                position = spaceships_positions[spaceship_index]
-
-                velocity = get_velocity(
-                    position,
-                    goal_positions,
-                    goal_radius,
-                    spaceship_index,
-                    spaceships_positions,
-                    spaceship_radius,
-                    obstacle_positions,
-                    obstacle_radius,
-                    safety_distance,
-                    attractive_force_scale,
-                    repulsive_force_scale,
-                    vortex_scale,
-                    max_speed,
-                )
-                velocities.append(velocity)
-
-                spaceships_positions[spaceship_index] += velocity
-
-                collided = check_for_collisions(
-                    spaceship_index,
-                    spaceships_positions,
-                    obstacle_positions,
-                    goal_positions,
-                    spaceship_radius + obstacle_radius + 0.01,
-                )
-                if collided:
-                    break
-
-            if collided:
-                break
-                
-           
-            for spaceship_index in range(num_spaceships):
-                training_data.append([])
-                training_data[count].append(map_size)
-                training_data[count].append(num_spaceships)
-                training_data[count].extend(spaceships_positions[spaceship_index].flatten())
-                training_data[count].extend(goal_positions[spaceship_index].flatten())
-                training_data[count].extend(spaceships_positions[np.arange(len(spaceships_positions))!=spaceship_index].flatten())
-                training_data[count].extend(goal_positions[np.arange(len(goal_positions))!=spaceship_index].flatten())
-                training_data[count].extend(obstacle_positions.flatten())
-                training_data[count].extend(velocities[spaceship_index])
-                count += 1
-
-            if check_for_completion(
+            (
                 spaceships_positions,
                 goal_positions,
-                distance_limit=spaceship_radius + goal_radius,
-            ):
+                obstacle_positions,
+            ) = generate_all_positions(
+                num_spaceships,
+                num_obstacles,
+                map_size,
+                spaceship_radius,
+                goal_radius,
+                obstacle_radius,
+            )
+            episode_data = []
+            episode_data_counter = 0
+            for timestep in range(timesteps):
+                for i in range(num_of_obstacles_meteorites):
+                    obstacle_positions[i] = obstacle_positions[i] + 0.2 * (
+                        np.array([np.cos(timestep), np.sin(timestep), np.cos(timestep)])
+                        * map_size
+                        / 2
+                    )
 
-                break
+                
+                num_spaceships = len(spaceships_positions)
+                velocities = []
+                for spaceship_index in range(num_spaceships):
+                    position = spaceships_positions[spaceship_index]
 
-    np.save("dataset", training_data, allow_pickle=True)
+                    velocity = get_velocity(
+                        position,
+                        goal_positions,
+                        goal_radius,
+                        spaceship_index,
+                        spaceships_positions,
+                        spaceship_radius,
+                        obstacle_positions,
+                        obstacle_radius,
+                        safety_distance,
+                        attractive_force_scale,
+                        repulsive_force_scale,
+                        vortex_scale,
+                        max_speed,
+                    )
+                    velocities.append(velocity)
+
+                    spaceships_positions[spaceship_index] += velocity
+
+                    collided = check_for_collisions(
+                        spaceship_index,
+                        spaceships_positions,
+                        obstacle_positions,
+                        goal_positions,
+                        spaceship_radius + obstacle_radius + 0.01,
+                    )
+                    if collided:
+                        break
+
+                if collided:
+                    break
+                    
+            
+                for spaceship_index in range(num_spaceships):
+                    episode_data.append([])
+                    episode_data[episode_data_counter].append(map_size)
+                    episode_data[episode_data_counter].append(num_spaceships)
+                    episode_data[episode_data_counter].extend(spaceships_positions[spaceship_index].flatten())
+                    episode_data[episode_data_counter].extend(goal_positions[spaceship_index].flatten())
+                    episode_data[episode_data_counter].extend(spaceships_positions[np.arange(len(spaceships_positions))!=spaceship_index].flatten())
+                    episode_data[episode_data_counter].extend(goal_positions[np.arange(len(goal_positions))!=spaceship_index].flatten())
+                    episode_data[episode_data_counter].extend(obstacle_positions.flatten())
+                    episode_data[episode_data_counter].extend(velocities[spaceship_index])
+                    episode_data_counter +=1
+                    
+
+                
+                if check_for_completion(
+                    spaceships_positions,
+                    goal_positions,
+                    distance_limit=spaceship_radius + goal_radius,
+                ):
+                    episode_counter+=1
+                    pbar.update(1)
+                    training_data.extend(episode_data)
+
+                    
+
+                    break
+        
+        np.save(dataset_name, training_data, allow_pickle=True)
     # return training_data
 
 
@@ -1223,17 +1235,19 @@ def run_experiment(min_range, max_range, variable, optional_set = None):
 if __name__ == "__main__":
     # main()
 
-    # run_experiment(2,12,"num_spaceships")
+    run_experiment(2,15,"map_size")
     
     # generate_data(
     #     map_size=10,
     #     timesteps=500,
-    #     episodes=20000,
+    #     episodes=10000,
     #     spaceship_radius=0.1,
     #     safety_distance=0.3,
     #     vortex_scale=0.25,
     #     num_obstacles=5,
     #     num_of_obstacles_meteorites=2,
     #     num_spaceships=4,
+    #     dataset_name="dataset",
     # )
+
     pass

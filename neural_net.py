@@ -2,7 +2,8 @@ import os
 from torch import optim, nn, utils, Tensor
 import torch
 from torch.utils.data import Dataset
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, random_split
+from torch.utils.data import ConcatDataset
 import pytorch_lightning as pl
 import pandas as pd
 import numpy as np
@@ -31,60 +32,52 @@ class CustomDataset(Dataset):
 
 
 class VectorFieldNeuralNetwork(pl.LightningModule):
-    def __init__(self, num_spaceships=4):
+    def __init__(self):
         super().__init__()
-        self.num_spaceships = num_spaceships
-        self.other_goal_positions_encoder = nn.GRU(
-            batch_first=True, input_size=1, hidden_size=16
-        )
-        self.other_spaceship_positions_encoder = nn.GRU(
-            batch_first=True, input_size=1, hidden_size=16
-        )
-        self.obstacles_encoder = nn.GRU(batch_first=True, input_size=1, hidden_size=16)
-        self.spaceship_position_encoder = nn.Linear(3, 16)
-        self.goal_position_encoder = nn.Linear(3, 16)
-        self.map_size_encoder = nn.Linear(1, 16)
-        self.num_spaceships_encoder = nn.Linear(1, 16)
+       
+        embedding_dim = 32
+        # self.map_size_encoder = nn.Linear(1, embedding_dim)
+        # self.num_spaceships_encoder = nn.Linear(1, embedding_dim)
+        self.spaceship_position_encoder = nn.Linear(3, embedding_dim)
+        self.goal_position_encoder = nn.Linear(3, embedding_dim)
+        
+        self.obstacles_encoder = nn.GRU(batch_first=True, input_size=3, hidden_size=embedding_dim*2, num_layers=1)
 
         self.final_layer = nn.Sequential(
-            nn.Linear(16 * 7, 128),
-            nn.ReLU(),
-            nn.Linear(128, 128),
-            nn.ReLU(),
-            nn.Linear(128, 3),
+            nn.LeakyReLU(),
+            nn.Linear(4*embedding_dim, 64),
+            nn.LeakyReLU(),
+            nn.Linear(64, 3),
         )
+
+        self.loss_fn = nn.HuberLoss()
+        self.train_loader, self.valid_loader = create_all_dataloaders("dataset",128)
 
     def forward(self, x):
+        
+        # map_size = x[:, 0].reshape(x.shape[0], 1)
+        # num_spaceships = x[:, 1].reshape(x.shape[0], 1)
+        current_spaceship_pos = x[:, 2 : 5]
+        current_goal_pos = x[:, 5 : 8]
+        # map_embedding = self.map_size_encoder(map_size)
+        # num_spaceships_embedding = self.num_spaceships_encoder(num_spaceships)
+        spaceship_pos_embedding = self.spaceship_position_encoder(current_spaceship_pos)
+        goal_pos_embedding = self.goal_position_encoder(current_goal_pos)
 
-        map_embedding = self.map_size_encoder(x[:, 0].reshape(-1, 1))
-        num_spaceships_embedding = self.num_spaceships_encoder(x[:, 1].reshape(-1, 1))
-        spaceship_pos_embedding = self.spaceship_position_encoder(x[:, 2 : 2 + 3])
-        goal_pos_embedding = self.goal_position_encoder(x[:, 5 : 5 + 3])
-        other_spaceship_pos_embedding, _ = self.other_spaceship_positions_encoder(
-            x[:, 8 : 8 + 3 * (self.num_spaceships-1)].reshape(x.shape[0], -1, 1)
-        )
-        other_spaceship_pos_embedding = other_spaceship_pos_embedding[:, -1, :]
-        other_goal_pos_embedding, _ = self.other_goal_positions_encoder(
-            x[:, 8 + 3 * (self.num_spaceships-1) : 8 + 6 * (self.num_spaceships-1)].reshape(
-                x.shape[0], -1, 1
-            )
-        )
-        other_goal_pos_embedding = other_goal_pos_embedding[:, -1, :]
-        obstacles_embedding, _ = self.obstacles_encoder(
-            x[:, 8 + 6 * self.num_spaceships-1 :].reshape(x.shape[0], -1, 1)
-        )
-        obstacles_embedding = obstacles_embedding[:, -1, :]
+        sequence_of_obstacles = x[:, 8 : ].reshape(x.shape[0],-1, 3)
+        
+        all_obstacles_embedding, _= self.obstacles_encoder(sequence_of_obstacles)
+        all_obstacles_embedding = all_obstacles_embedding[:, -1, :]
+        
 
         x = torch.concat(
             [
-                map_embedding,
-                num_spaceships_embedding,
+                # map_embedding,
+                # num_spaceships_embedding,
                 spaceship_pos_embedding,
                 goal_pos_embedding,
-                other_spaceship_pos_embedding,
-                other_goal_pos_embedding,
-                obstacles_embedding,
-            ],-1
+                all_obstacles_embedding
+            ], dim = -1
         )
 
         out = self.final_layer(x)
@@ -92,20 +85,29 @@ class VectorFieldNeuralNetwork(pl.LightningModule):
         return out
 
     def training_step(self, batch, batch_idx):
-        # training_step defines the train loop.
-        # it is independent of forward
-
         x, y = batch
         x = self.forward(x)
-        loss = nn.functional.mse_loss(x, y)
-        # Logging to TensorBoard by default
+        loss = self.loss_fn(x, y)
         self.log("train_loss", loss)
         return loss
+
+    def validation_step(self, batch, batch_idx):
+        x, y = batch
+        y_hat = self.forward(x)
+        loss = self.loss_fn(y_hat, y)
+        self.log("val_loss", loss) 
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=1e-4)
         return optimizer
 
+    def train_dataloader(self):
+        return self.train_loader
+
+    def val_dataloader(self):
+        return self.valid_loader
+
+   
 
 def format_input_for_nn(
     map_size, spaceship_index, spaceships_positions, goal_positions, obstacle_positions
@@ -120,7 +122,7 @@ def format_input_for_nn(
     data.extend(spaceships_positions[np.arange(len(spaceships_positions))!=spaceship_index].flatten())
     data.extend(goal_positions[np.arange(len(goal_positions))!=spaceship_index].flatten())
     data.extend(obstacle_positions.flatten())
-
+    
     return torch.tensor(data).float().reshape(1, -1)
 
 
@@ -151,7 +153,7 @@ def perform_timestep(
 
     num_spaceships = len(spaceships_positions)
     for spaceship_index in range(num_spaceships):
-        position = spaceships_positions[spaceship_index]
+
 
         velocity = neural_net(
             format_input_for_nn(
@@ -162,7 +164,8 @@ def perform_timestep(
                 obstacle_positions,
             )
         )
-        spaceships_positions[spaceship_index] += torch.squeeze(velocity).detach().numpy()
+        
+        spaceships_positions[spaceship_index] += torch.squeeze(velocity).numpy()
 
         collided = check_for_collisions(
             spaceship_index,
@@ -241,20 +244,20 @@ def eval(
 
 
 def experiment(
-    map_size=5,
+    map_size=10,
     num_spaceships=4,
     goal_radius=0.3,
-    num_obstacles=3,
-    num_of_obstacles_meteorites=0,
+    num_obstacles=5,
+    num_of_obstacles_meteorites=2,
     obstacle_radius=0.3,
     spaceship_radius=0.2,
     safety_distance=1.0,
     max_speed=0.3,
     attractive_force_scale=0.3,
     repulsive_force_scale=0.3,
-    vortex_scale=0.22,
-    timesteps=150,
-    episodes=100,
+    vortex_scale=0.25,
+    timesteps=500,
+    episodes=1000,
     neural_net=None,
 ):
 
@@ -305,7 +308,7 @@ def experiment(
     )
 
 
-def run_experiment(neural_net, min_range, max_range, variable):
+def run_experiment(neural_net, min_range, max_range, variable, optional_set=None):
     success_rates = []
     lengths = []
     collision_failures = []
@@ -320,13 +323,14 @@ def run_experiment(neural_net, min_range, max_range, variable):
             "num_of_obstacles_meteorites":2,
             "num_spaceships":4,
             "neural_net" : neural_net}
-    
-    values = range(min_range, max_range)
-   
-       
+
+    if optional_set is not None:
+        values = optional_set
+    else:
+        values = range(min_range, max_range)
     for i in values:
         params[variable] = i
-        # params["num_of_obstacles_meteorites"] = i-2
+        params["num_of_obstacles_meteorites"] = i-2
         success_rate, length, collision_failure, local_minima = experiment(
             **params
         )
@@ -335,13 +339,12 @@ def run_experiment(neural_net, min_range, max_range, variable):
         collision_failures.append(collision_failure)
         local_minimas.append(local_minima)
 
+    fig, axes = plt.subplots(2, 2)
 
     print("Success Rates:",success_rates)
     print("Lengths:",lengths)
     print("Collision Failures:",collision_failures)
     print("Local Minimas:",local_minimas)
-
-    fig, axes = plt.subplots(2, 2)
 
     axes[0, 0].plot(success_rates)
     axes[0, 0].set_title("Average percentage of successfully completed runs")
@@ -353,35 +356,58 @@ def run_experiment(neural_net, min_range, max_range, variable):
     axes[1, 1].set_title("Average percentage of failures due to local minimas")
     plt.show()
 
+def collate_batch(batch):
+    """For padding"""
+   
+    xs, ys, = [], []
+   
+    for (x,y) in batch:
+        ys.append(y)
+        xs.append(x)
+   
+    ys = torch.stack(ys)
+    xs = torch.nn.utils.rnn.pad_sequence(xs, batch_first=True, padding_value=0)
+   
+    return xs, ys
+
+def create_all_dataloaders(dataset_name, batch_size, train_test_split = 0.9, num_workers = 4):
+    
+    data = np.load(f"{dataset_name}.npy", allow_pickle=True)
+    dataset = CustomDataset(data)
+    train_set_size = int(train_test_split*len(dataset))
+    valid_set_size = len(dataset) - train_set_size
+    train_set, valid_set = random_split(dataset, [train_set_size, valid_set_size])
+    train_loader = DataLoader(train_set, batch_size, True, num_workers=num_workers)
+    valid_loader = DataLoader(valid_set, batch_size, False, num_workers=num_workers)
+  
+    return train_loader, valid_loader
 
 def main():
-    load_check = False
-    train = True
+    load_check = 1
+    train = 0
 
-    trained_on_num_spaceships=4
-    vf_nn = VectorFieldNeuralNetwork(num_spaceships=trained_on_num_spaceships)
+    
     if load_check:
-        checkpoint = "./lightning_logs/version_4/checkpoints/epoch=6-step=61285.ckpt"
-        vf_nn = VectorFieldNeuralNetwork.load_from_checkpoint(checkpoint, num_spaceships=trained_on_num_spaceships)
+        version = 16
+        epoch = 49
+        step = 798200
+        checkpoint = f"./lightning_logs/version_{version}/checkpoints/epoch={epoch}-step={step}.ckpt"
+        vf_nn = VectorFieldNeuralNetwork.load_from_checkpoint(checkpoint)
+    else:
+        vf_nn = VectorFieldNeuralNetwork()
 
     # setup data
     if train:
-        data = np.load("bigdataset.npy", allow_pickle=True)
-        dataset = CustomDataset(data)
-        train_loader = DataLoader(
-            dataset, batch_size=128, shuffle=True, num_workers=8, prefetch_factor=2
-        )
-
-    
-        trainer = pl.Trainer(limit_train_batches=1.0, max_epochs=20)
-        trainer.fit(model=vf_nn, train_dataloaders=train_loader)
+        
+        trainer = pl.Trainer(limit_train_batches=1.0, max_epochs=50)
+        trainer.fit(model=vf_nn)
     else:
        
         # # choose your trained nn.Module
         neural_net = vf_nn
         neural_net.eval()
 
-        run_experiment(neural_net, 2, 15, "map_size")
+        run_experiment(neural_net, 2, 12, "num_obstacles")
 
 
 if __name__ == "__main__":
